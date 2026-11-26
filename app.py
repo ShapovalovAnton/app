@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from parser import SyntaxAnalyzer
 
+from rpn_generator import RPNGenerator
+
 NONECODE = 0
 ACCEPTCODE = 1
 ERRORCODE = -1
@@ -246,11 +248,15 @@ class LexicalAnalyzer:
 class CompilerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Лексичний та синтаксичний аналізатор (МПА) — Лаб №3 (Варіант 15)")
-        self.root.geometry("1220x720")
+        self.root.title("Лексичний, синтаксичний аналізатор (МПА) та побудова ПОЛІЗ — Лаб №4 (Варіант 15)")
+        self.root.geometry("1260x740")
 
         self.parser_steps = []
         self.current_step_idx = -1
+
+        self.rpn_steps = []
+        self.current_rpn_idx = -1
+        self.poliz_result_str = ""
 
         paned = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -271,7 +277,7 @@ class CompilerApp:
         btn_load = ttk.Button(btn_frame, text="Відкрити файл...", command=self.load_file)
         btn_load.pack(side=tk.LEFT, padx=3)
 
-        btn_run = ttk.Button(btn_frame, text="▶ Запустити аналіз (Сканер + Парсер)", command=self.run_analysis)
+        btn_run = ttk.Button(btn_frame, text="▶ Запустити аналіз (Сканер + Парсер + ПОЛІЗ)", command=self.run_analysis)
         btn_run.pack(side=tk.RIGHT, padx=3)
 
         # Права частина: вкладки з результатами
@@ -285,7 +291,7 @@ class CompilerApp:
         tab_parser = ttk.Frame(self.notebook)
         self.notebook.add(tab_parser, text="Покроковий розбір МПА")
 
-        # Панель керування покроковим переглядом
+        # Панель керування покроковим переглядом МПА
         step_ctrl_frame = ttk.Frame(tab_parser)
         step_ctrl_frame.pack(fill=tk.X, padx=4, pady=4)
 
@@ -317,7 +323,7 @@ class CompilerApp:
         self.lbl_cur_stack = ttk.Label(info_frame, text="Вміст стека: —", font=("Consolas", 10))
         self.lbl_cur_stack.pack(anchor=tk.W, padx=6, pady=1)
 
-        # Таблиця кроків розбору
+        # Таблиця кроків розбору МПА
         self.tree_steps = ttk.Treeview(
             tab_parser,
             columns=("step", "line", "token", "state", "stack", "action"),
@@ -338,7 +344,72 @@ class CompilerApp:
         self.tree_steps.column("action", width=230)
         self.tree_steps.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
 
-        # Вкладка 2: Вихідна таблиця лексем
+        # Вкладка 2: Побудова ПОЛІЗ (Лаб 4)
+        tab_poliz = ttk.Frame(self.notebook)
+        self.notebook.add(tab_poliz, text="ПОЛІЗ (покроково)")
+
+        rpn_ctrl_frame = ttk.Frame(tab_poliz)
+        rpn_ctrl_frame.pack(fill=tk.X, padx=4, pady=4)
+
+        self.btn_rpn_first = ttk.Button(rpn_ctrl_frame, text="⏮ На початок", command=self.rpn_step_first, state=tk.DISABLED)
+        self.btn_rpn_first.pack(side=tk.LEFT, padx=2)
+
+        self.btn_rpn_prev = ttk.Button(rpn_ctrl_frame, text="◀ Попередній крок", command=self.rpn_step_prev, state=tk.DISABLED)
+        self.btn_rpn_prev.pack(side=tk.LEFT, padx=2)
+
+        self.btn_rpn_next = ttk.Button(rpn_ctrl_frame, text="Наступний крок ▶", command=self.rpn_step_next, state=tk.DISABLED)
+        self.btn_rpn_next.pack(side=tk.LEFT, padx=2)
+
+        self.btn_rpn_all = ttk.Button(rpn_ctrl_frame, text="⏭ Показати всі", command=self.rpn_step_show_all, state=tk.DISABLED)
+        self.btn_rpn_all.pack(side=tk.LEFT, padx=2)
+
+        self.lbl_rpn_status = ttk.Label(rpn_ctrl_frame, text="Крок: 0 / 0", font=("Segoe UI", 9, "bold"))
+        self.lbl_rpn_status.pack(side=tk.RIGHT, padx=6)
+
+        rpn_info_frame = ttk.LabelFrame(tab_poliz, text="Результат побудови ПОЛІЗ")
+        rpn_info_frame.pack(fill=tk.X, padx=4, pady=(0, 4))
+
+        self.lbl_poliz_result = ttk.Label(
+            rpn_info_frame,
+            text="Підсумковий ПОЛІЗ: —",
+            font=("Consolas", 10, "bold"),
+            wraplength=760,
+            justify=tk.LEFT
+        )
+        self.lbl_poliz_result.pack(anchor=tk.W, padx=6, pady=3)
+
+        self.lbl_rpn_cur_token = ttk.Label(rpn_info_frame, text="Вхідна лексема: —", font=("Consolas", 10))
+        self.lbl_rpn_cur_token.pack(anchor=tk.W, padx=6, pady=1)
+
+        self.lbl_rpn_cur_stack = ttk.Label(rpn_info_frame, text="Стек операторів / міток: —", font=("Consolas", 10))
+        self.lbl_rpn_cur_stack.pack(anchor=tk.W, padx=6, pady=1)
+
+        self.lbl_rpn_cur_out = ttk.Label(
+            rpn_info_frame,
+            text="Поточний вихідний рядок ПОЛІЗ: —",
+            font=("Consolas", 10),
+            wraplength=760,
+            justify=tk.LEFT
+        )
+        self.lbl_rpn_cur_out.pack(anchor=tk.W, padx=6, pady=(1, 3))
+
+        self.tree_poliz = ttk.Treeview(
+            tab_poliz,
+            columns=("step", "token", "stack", "poliz"),
+            show="headings"
+        )
+        self.tree_poliz.heading("step", text="Крок")
+        self.tree_poliz.heading("token", text="Вхідна лексема")
+        self.tree_poliz.heading("stack", text="Стек")
+        self.tree_poliz.heading("poliz", text="Вихідний рядок ПОЛІЗ")
+
+        self.tree_poliz.column("step", width=60, anchor=tk.CENTER)
+        self.tree_poliz.column("token", width=160)
+        self.tree_poliz.column("stack", width=190)
+        self.tree_poliz.column("poliz", width=360)
+        self.tree_poliz.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+
+        # Вкладка 3: Вихідна таблиця лексем
         tab_tokens = ttk.Frame(self.notebook)
         self.notebook.add(tab_tokens, text="Вихідна таблиця лексем")
         self.tree_tokens = ttk.Treeview(tab_tokens, columns=("line", "lexeme", "code", "index"), show="headings")
@@ -352,7 +423,7 @@ class CompilerApp:
         self.tree_tokens.column("index", width=110, anchor=tk.CENTER)
         self.tree_tokens.pack(fill=tk.BOTH, expand=True)
 
-        # Вкладка 3: Таблиця IDN
+        # Вкладка 4: Таблиця IDN
         tab_idn = ttk.Frame(self.notebook)
         self.notebook.add(tab_idn, text="Таблиця IDN")
         self.tree_idn = ttk.Treeview(tab_idn, columns=("index", "name"), show="headings")
@@ -361,7 +432,7 @@ class CompilerApp:
         self.tree_idn.column("index", width=60, anchor=tk.CENTER)
         self.tree_idn.pack(fill=tk.BOTH, expand=True)
 
-        # Вкладка 4: Таблиця CON
+        # Вкладка 5: Таблиця CON
         tab_con = ttk.Frame(self.notebook)
         self.notebook.add(tab_con, text="Таблиця CON")
         self.tree_con = ttk.Treeview(tab_con, columns=("index", "value"), show="headings")
@@ -418,9 +489,12 @@ class CompilerApp:
             self.lbl_cur_token.config(text="Поточна лексема: —")
             self.lbl_cur_state.config(text="Стан автомата: —")
             self.lbl_cur_stack.config(text="Вміст стека: —")
+            self.btn_first_step.config(state=tk.DISABLED)
+            self.btn_prev_step.config(state=tk.DISABLED)
+            self.btn_next_step.config(state=tk.DISABLED)
+            self.btn_all_steps.config(state=tk.DISABLED)
             return
 
-        # Виводимо кроки від 0 до current_step_idx включно
         last_item = None
         for i in range(self.current_step_idx + 1):
             last_item = self.tree_steps.insert("", tk.END, values=self.parser_steps[i])
@@ -439,6 +513,44 @@ class CompilerApp:
         self.btn_prev_step.config(state=tk.NORMAL if self.current_step_idx > 0 else tk.DISABLED)
         self.btn_next_step.config(state=tk.NORMAL if self.current_step_idx < total - 1 else tk.DISABLED)
         self.btn_all_steps.config(state=tk.NORMAL if self.current_step_idx < total - 1 else tk.DISABLED)
+
+    def _update_rpn_view(self):
+        for row in self.tree_poliz.get_children():
+            self.tree_poliz.delete(row)
+
+        total = len(self.rpn_steps)
+        if total == 0 or self.current_rpn_idx < 0:
+            self.lbl_rpn_status.config(text=f"Крок: 0 / {total}")
+            self.lbl_poliz_result.config(text="Підсумковий ПОЛІЗ: —")
+            self.lbl_rpn_cur_token.config(text="Вхідна лексема: —")
+            self.lbl_rpn_cur_stack.config(text="Стек операторів / міток: —")
+            self.lbl_rpn_cur_out.config(text="Поточний вихідний рядок ПОЛІЗ: —")
+            self.btn_rpn_first.config(state=tk.DISABLED)
+            self.btn_rpn_prev.config(state=tk.DISABLED)
+            self.btn_rpn_next.config(state=tk.DISABLED)
+            self.btn_rpn_all.config(state=tk.DISABLED)
+            return
+
+        self.lbl_poliz_result.config(text=f"Підсумковий ПОЛІЗ: {self.poliz_result_str}")
+
+        last_item = None
+        for i in range(self.current_rpn_idx + 1):
+            last_item = self.tree_poliz.insert("", tk.END, values=self.rpn_steps[i])
+
+        if last_item:
+            self.tree_poliz.selection_set(last_item)
+            self.tree_poliz.see(last_item)
+
+        step_num, token_str, stack_str, poliz_str = self.rpn_steps[self.current_rpn_idx]
+        self.lbl_rpn_status.config(text=f"Крок: {step_num} / {total}")
+        self.lbl_rpn_cur_token.config(text=f"Вхідна лексема:              {token_str}")
+        self.lbl_rpn_cur_stack.config(text=f"Стек операторів / міток:     {stack_str}")
+        self.lbl_rpn_cur_out.config(text=f"Поточний вихідний рядок ПОЛІЗ: {poliz_str}")
+
+        self.btn_rpn_first.config(state=tk.NORMAL if self.current_rpn_idx > 0 else tk.DISABLED)
+        self.btn_rpn_prev.config(state=tk.NORMAL if self.current_rpn_idx > 0 else tk.DISABLED)
+        self.btn_rpn_next.config(state=tk.NORMAL if self.current_rpn_idx < total - 1 else tk.DISABLED)
+        self.btn_rpn_all.config(state=tk.NORMAL if self.current_rpn_idx < total - 1 else tk.DISABLED)
 
     def step_first(self):
         if self.parser_steps:
@@ -460,13 +572,36 @@ class CompilerApp:
             self.current_step_idx = len(self.parser_steps) - 1
             self._update_step_view()
 
+    def rpn_step_first(self):
+        if self.rpn_steps:
+            self.current_rpn_idx = 0
+            self._update_rpn_view()
+
+    def rpn_step_prev(self):
+        if self.current_rpn_idx > 0:
+            self.current_rpn_idx -= 1
+            self._update_rpn_view()
+
+    def rpn_step_next(self):
+        if self.current_rpn_idx < len(self.rpn_steps) - 1:
+            self.current_rpn_idx += 1
+            self._update_rpn_view()
+
+    def rpn_step_show_all(self):
+        if self.rpn_steps:
+            self.current_rpn_idx = len(self.rpn_steps) - 1
+            self._update_rpn_view()
+
     def run_analysis(self):
-        for tree in (self.tree_tokens, self.tree_idn, self.tree_con, self.tree_steps):
+        for tree in (self.tree_tokens, self.tree_idn, self.tree_con, self.tree_steps, self.tree_poliz):
             for row in tree.get_children():
                 tree.delete(row)
         self.txt_log.delete("1.0", tk.END)
         self.parser_steps = []
         self.current_step_idx = -1
+        self.rpn_steps = []
+        self.current_rpn_idx = -1
+        self.poliz_result_str = ""
 
         # 1. Етап лексичного аналізу
         source = self.txt_source.get("1.0", tk.END)
@@ -486,6 +621,7 @@ class CompilerApp:
             for err in scanner.errors:
                 self.txt_log.insert(tk.END, "[Лексична помилка] " + err + "\n", "error")
             self._update_step_view()
+            self._update_rpn_view()
             messagebox.showwarning("Помилка", f"Лексичний аналіз зупинено через помилки ({len(scanner.errors)}).")
             return
 
@@ -506,8 +642,23 @@ class CompilerApp:
                 f"2. Синтаксичний аналіз (МПА) виконано успішно за {len(parser.steps)} кроків. Програма синтаксично правильна.\n",
                 "success"
             )
-            self.notebook.select(0)
+
+            # 3. Етап побудови ПОЛІЗ (запускається лише після успішного парсингу)
+            rpn_gen = RPNGenerator(scanner.tokens_table)
+            self.poliz_result_str = rpn_gen.generate()
+            self.rpn_steps = rpn_gen.steps
+            if self.rpn_steps:
+                self.current_rpn_idx = len(self.rpn_steps) - 1
+            self._update_rpn_view()
+
+            self.txt_log.insert(
+                tk.END,
+                f"3. Побудову ПОЛІЗ виконано за {len(self.rpn_steps)} кроків: {self.poliz_result_str}\n",
+                "success"
+            )
+            self.notebook.select(1)  # Перемикаємо на вкладку ПОЛІЗ
         else:
+            self._update_rpn_view()
             for err in parser.errors:
                 self.txt_log.insert(tk.END, "[Синтаксична помилка] " + err + "\n", "error")
             self.notebook.select(0)
